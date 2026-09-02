@@ -1,0 +1,23 @@
+
+echo "🏗️  Checking architecture..."
+pnpm run lint:arch
+if [ $? -ne 0 ]; then
+  echo "❌ Architecture check failed"
+  exit 1
+fi
+
+echo "🎨 Running ESLint..."
+pnpm run lint
+if [ $? -ne 0 ]; then
+  echo "❌ Linting failed"
+  exit 1
+fi
+
+echo "📝 Type checking..."
+pnpm run type-check
+if [ $? -ne 0 ]; then
+  echo "❌ Type checking failed"
+  exit 1
+fi
+
+echo "✅ All validations passed - ready to push!"

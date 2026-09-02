@@ -1,0 +1,68 @@
+name: CI
+
+on:
+  push:
+    branches: [ main, development, staging, test, features/*, fix/*,revisions/*,hotfix/*,chore/* ]
+  pull_request:
+    branches: [ main, development, staging, test,features/*, fix/*,revisions/*,hotfix/*,chore/* ]
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  quality-checks:
+    name: Quality Checks
+    runs-on: ubuntu-latest
+
+    steps:
+    # Checkout repo
+    - name: ⬇️ Checkout repo
+      uses: actions/checkout@v4
+
+
+    # Setup Node.js
+    - name: ⎔ Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: 24
+  
+  # Setup pnpm
+    - name: 🚀 Setup pnpm
+      uses: pnpm/action-setup@v4
+      with:
+        version: 9
+
+
+    # Cache pnpm store
+    - name: 📦 Cache pnpm store
+      uses: actions/cache@v4
+      with:
+        path: ~/.pnpm-store
+        key: pnpm-store-${{ hashFiles('pnpm-lock.yaml') }}
+        restore-keys: |
+          pnpm-store-
+
+    # Install dependencies
+    - name: 📥 Install dependencies
+      run: pnpm install
+
+    # Build project
+    - name: 🏗️ Build Project
+      run: pnpm build
+
+    # Run Typescript type checking
+    - name: 🔎 Run Typescript type checking
+      run: pnpm type-check
+
+    # Run ESLint
+    - name: 🧑‍💻 Run ESLint
+      run: pnpm lint
+
+    # Run Prettier Check
+    - name: 📝 Run Prettier Check
+      run: pnpm format:check
+
+    # Commitlint
+    - name: ⚙️ Commitlint
+      uses: wagoid/commitlint-github-action@v6
