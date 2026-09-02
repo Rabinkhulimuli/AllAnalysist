@@ -1,5 +1,6 @@
 'use client';
 
+import { ThemeProvider } from 'next-themes';
 import { ReactNode } from 'react';
 
 interface RootProvidersProps {
@@ -13,14 +14,8 @@ interface RootProvidersProps {
  */
 export function RootProviders({ children }: RootProvidersProps) {
   return (
-    <>
-      {/* TODO: Add providers like:
-        - ThemeProvider
-        - QueryClientProvider
-        - AuthContext
-        - etc.
-      */}
+    <ThemeProvider attribute='class' defaultTheme='system' enableSystem disableTransitionOnChange>
       {children}
-    </>
+    </ThemeProvider>
   );
 }

@@ -168,3 +168,108 @@
     @apply font-sans;
   }
 }
+
+:root {
+  --trade-main: #f4f7f8;
+  --trade-card: #ffffff;
+  --trade-elevated: #edf3f2;
+  --trade-border: #d7e1e2;
+  --trade-text: #10201f;
+  --trade-secondary: #59706e;
+  --trade-buy: #16803c;
+  --trade-sell: #c93636;
+  --trade-neutral: #607782;
+  --trade-accent: #087f69;
+  --trade-warning: #b56a00;
+}
+
+.dark {
+  --trade-main: #080b10;
+  --trade-card: #0e131b;
+  --trade-elevated: #141a24;
+  --trade-border: #222a36;
+  --trade-text: #f1f5f9;
+  --trade-secondary: #8994a5;
+  --trade-buy: #22c55e;
+  --trade-sell: #ef4444;
+  --trade-neutral: #94a3b8;
+  --trade-accent: #10b981;
+  --trade-warning: #f59e0b;
+}
+
+@theme inline {
+  --color-trade-main: var(--trade-main);
+  --color-trade-card: var(--trade-card);
+  --color-trade-elevated: var(--trade-elevated);
+  --color-trade-border: var(--trade-border);
+  --color-trade-text: var(--trade-text);
+  --color-trade-secondary: var(--trade-secondary);
+  --color-trade-buy: var(--trade-buy);
+  --color-trade-sell: var(--trade-sell);
+  --color-trade-neutral: var(--trade-neutral);
+  --color-trade-accent: var(--trade-accent);
+  --color-trade-warning: var(--trade-warning);
+}
+
+@layer utilities {
+  .trade-shell {
+    background-color: var(--trade-main);
+    color: var(--trade-text);
+  }
+
+  .trade-card {
+    border-color: var(--trade-border);
+    background-color: var(--trade-card);
+  }
+
+  .trade-elevated {
+    border-color: var(--trade-border);
+    background-color: var(--trade-elevated);
+  }
+
+  .trade-border {
+    border-color: var(--trade-border);
+  }
+
+  .trade-text {
+    color: var(--trade-text);
+  }
+
+  .trade-secondary {
+    color: var(--trade-secondary);
+  }
+
+  .trade-buy {
+    color: var(--trade-buy);
+  }
+
+  .trade-sell {
+    color: var(--trade-sell);
+  }
+
+  .trade-neutral {
+    color: var(--trade-neutral);
+  }
+
+  .trade-accent {
+    color: var(--trade-accent);
+  }
+
+  .trade-warning {
+    color: var(--trade-warning);
+  }
+
+  .trade-control {
+    border-color: var(--trade-border);
+    background-color: var(--trade-card);
+    color: var(--trade-text);
+  }
+
+  .trade-control::placeholder {
+    color: var(--trade-secondary);
+  }
+
+  .trade-control:hover {
+    background-color: var(--trade-elevated);
+  }
+}
