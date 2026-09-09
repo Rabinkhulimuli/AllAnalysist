@@ -1,5 +1,5 @@
 'use client';
-import { useEffect, useRef, useState } from 'react';
+import { useRef, useState } from 'react';
 import {
   CheckCircle2,
   FileSpreadsheet,
@@ -7,7 +7,6 @@ import {
   Image as ImageIcon,
   Loader2,
   Sparkles,
-  Table as TableIcon,
   UploadCloud,
   X,
 } from 'lucide-react';
@@ -17,31 +16,18 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Progress } from '@/components/ui/progress';
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from '@/components/ui/table';
 import { cn } from '@/lib/utils';
-import { currency2, extractedRows } from '@/src/presentation/features/TradeDetail/constants/trade';
+import {
+  DocumentStatusValue,
+  documentPipelineService,
+} from '@/src/infrastructure/finance/DocumentPipelineService';
 
-type Stage = 'idle' | 'uploading' | 'processing' | 'results';
+type Stage = 'idle' | 'uploading' | 'processing' | 'results' | 'error';
 
-type Picked = { name: string; size: number; kind: string };
+type Picked = { file: File; id?: string; name: string; size: number; kind: string };
 
 const ACCEPT =
   '.pdf,.doc,.docx,.csv,.xls,.xlsx,.png,.jpg,.jpeg,.webp,application/pdf,text/csv,image/*';
-
-const STEPS = [
-  'Uploading & virus scan',
-  'Detecting document type',
-  'OCR & table extraction',
-  'Matching SKUs to ledger',
-  'Calculating cost, revenue & P&L',
-];
 
 function kindOf(name: string) {
   const ext = name.split('.').pop()?.toLowerCase() ?? '';
@@ -55,7 +41,6 @@ function kindOf(name: string) {
 function iconFor(kind: string) {
   if (kind === 'Spreadsheet') return FileSpreadsheet;
   if (kind === 'Image') return ImageIcon;
-  if (kind === 'Word') return FileText;
   return FileText;
 }
 
@@ -64,78 +49,109 @@ const formatSize = (bytes: number) =>
     ? `${(bytes / 1024 / 1024).toFixed(1)} MB`
     : `${Math.max(1, Math.round(bytes / 1024))} KB`;
 
-export function UploadWorkflow() {
+const POLL_INTERVAL_MS = 1200;
+const MAX_POLL_ATTEMPTS = 120;
+
+const STEPS = [
+  'Uploading file',
+  'Detecting document type',
+  'Extracting & classifying transactions',
+  'Posting to the financial ledger',
+];
+
+export function UploadWorkflow({ onImported }: { onImported?: () => void }) {
   const [stage, setStage] = useState<Stage>('idle');
   const [dragging, setDragging] = useState(false);
   const [files, setFiles] = useState<Picked[]>([]);
   const [progress, setProgress] = useState(0);
-  const [step, setStep] = useState(0);
+  const [error, setError] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
-  useEffect(() => {
-    if (stage !== 'uploading') return;
-    const id = setInterval(() => {
-      setProgress(p => {
-        if (p >= 100) return 100;
-        return Math.min(100, p + 8 + Math.random() * 10);
-      });
-    }, 140);
-    return () => clearInterval(id);
-  }, [stage]);
+  const poll = (getId: () => string | undefined) => {
+    let attempts = 0;
+    const id = window.setInterval(async () => {
+      const documentId = getId();
+      if (!documentId) {
+        window.clearInterval(id);
+        return;
+      }
+      attempts += 1;
+      try {
+        const doc = await documentPipelineService.getDocument(documentId);
+        setFiles(prev => prev.map(p => (p.id === documentId ? { ...p, id: documentId } : p)));
+        const status: DocumentStatusValue = doc.status;
+        if (status === 'COMPLETED') {
+          window.clearInterval(id);
+          setProgress(100);
+          setStage('results');
+          toast.success('Document processed', {
+            description: 'Transactions were extracted and posted to your ledger.',
+          });
+          onImported?.();
+          return;
+        }
+        if (status === 'FAILED') {
+          window.clearInterval(id);
+          setError(doc.error_message || 'Document processing failed.');
+          setStage('error');
+          toast.error('Processing failed', { description: error });
+          return;
+        }
+        setProgress(Math.min(96, 10 + (attempts % 80)));
+      } catch {
+        if (attempts >= 3) {
+          window.clearInterval(id);
+          setError('Could not check document status. The backend may be unavailable.');
+          setStage('error');
+          toast.error('Status check failed');
+          return;
+        }
+      }
+      if (attempts >= MAX_POLL_ATTEMPTS) {
+        window.clearInterval(id);
+        setError('Processing is taking longer than expected. Try again later.');
+        setStage('error');
+      }
+    }, POLL_INTERVAL_MS);
+  };
 
-  useEffect(() => {
-    if (stage !== 'uploading' || progress < 100) return undefined;
-    const t = setTimeout(() => {
-      setStage('processing');
-      setStep(0);
-    }, 350);
-    return () => clearTimeout(t);
-  }, [stage, progress]);
-
-  useEffect(() => {
-    if (stage !== 'processing') return;
-    if (step >= STEPS.length) {
-      const t = setTimeout(() => {
-        setStage('results');
-        toast.success(`${extractedRows.length} transactions extracted`, {
-          description: 'Review and import them into your ledger.',
-        });
-      }, 400);
-      return () => clearTimeout(t);
-    }
-    const t = setTimeout(() => setStep(s => s + 1), 700);
-    return () => clearTimeout(t);
-  }, [stage, step]);
-
-  const accept = (list: FileList | null) => {
+  const accept = async (list: FileList | null) => {
     if (!list || list.length === 0) return;
     const picked = Array.from(list).map(f => ({
+      file: f,
+      id: undefined as string | undefined,
       name: f.name,
       size: f.size,
       kind: kindOf(f.name),
     }));
     setFiles(picked);
-    setProgress(0);
+    setError(null);
     setStage('uploading');
+    setProgress(0);
+
+    try {
+      for (let i = 0; i < picked.length; i++) {
+        const uploaded = await documentPipelineService.uploadFile(picked[i].file);
+        setFiles(prev =>
+          prev.map(p => (p.name === uploaded.filename ? { ...p, id: uploaded.id } : p))
+        );
+        setProgress(Math.round(((i + 1) / picked.length) * 100));
+        poll(() => uploaded.id);
+      }
+      setStage('processing');
+    } catch (e) {
+      setError((e as Error).message);
+      setStage('error');
+    }
   };
 
   const reset = () => {
     setFiles([]);
     setStage('idle');
     setProgress(0);
-    setStep(0);
+    setError(null);
     if (inputRef.current) inputRef.current.value = '';
   };
-
-  const totals = extractedRows.reduce(
-    (acc, r) => {
-      const amount = r.units * r.unitValue;
-      if (r.type === 'Sale') acc.revenue += amount;
-      else acc.cost += amount;
-      return acc;
-    },
-    { revenue: 0, cost: 0 }
-  );
 
   return (
     <Card id='upload' className='trade-card border-trade-accent/30'>
@@ -143,11 +159,11 @@ export function UploadWorkflow() {
         <div>
           <CardTitle className='flex items-center gap-2 text-base'>
             <Sparkles className='trade-accent size-4' />
-            Import trading documents
+            Import financial documents
           </CardTitle>
           <CardDescription>
-            Drop invoices, contracts, sales exports or shelf photos — we extract the transactions
-            for you.
+            Drop bank statements, trading histories, invoices or receipts — we extract and import
+            them automatically.
           </CardDescription>
         </div>
         {stage !== 'idle' && (
@@ -173,7 +189,7 @@ export function UploadWorkflow() {
               onDrop={e => {
                 e.preventDefault();
                 setDragging(false);
-                accept(e.dataTransfer.files);
+                void accept(e.dataTransfer.files);
               }}
               className={cn(
                 'flex cursor-pointer flex-col items-center justify-center rounded-xl border-2 border-dashed px-6 py-12 text-center transition-colors',
@@ -208,7 +224,7 @@ export function UploadWorkflow() {
               multiple
               accept={ACCEPT}
               className='hidden'
-              onChange={e => accept(e.target.files)}
+              onChange={e => void accept(e.target.files)}
             />
           </>
         )}
@@ -248,127 +264,55 @@ export function UploadWorkflow() {
                 <Progress value={progress} />
               </div>
             ) : (
-              <ol className='space-y-3'>
-                {STEPS.map((label, i) => (
-                  <li key={label} className='flex items-center gap-3 text-sm'>
-                    {i < step ? (
-                      <CheckCircle2 className='trade-buy size-4' />
-                    ) : i === step ? (
-                      <Loader2 className='trade-accent size-4 animate-spin' />
-                    ) : (
-                      <span className='trade-border size-4 rounded-full border' />
-                    )}
-                    <span className={cn(i > step && 'trade-secondary')}>{label}</span>
-                  </li>
-                ))}
-              </ol>
+              <div className='space-y-2'>
+                <div className='trade-secondary flex justify-between text-xs'>
+                  <span>Processing document…</span>
+                  <span className='tabular-nums'>{Math.round(progress)}%</span>
+                </div>
+                <Progress value={progress} />
+                <ol className='mt-3 space-y-3'>
+                  {STEPS.map((label, i) => (
+                    <li key={label} className='flex items-center gap-3 text-sm'>
+                      {i < 1 ? (
+                        <CheckCircle2 className='trade-buy size-4' />
+                      ) : i === 1 ? (
+                        <Loader2 className='trade-accent size-4 animate-spin' />
+                      ) : (
+                        <span className='trade-border size-4 rounded-full border' />
+                      )}
+                      <span className={cn(i > 1 && 'trade-secondary')}>{label}</span>
+                    </li>
+                  ))}
+                </ol>
+              </div>
             )}
           </div>
         )}
 
         {stage === 'results' && (
           <div className='space-y-5'>
-            <div className='grid gap-3 sm:grid-cols-4'>
-              {[
-                { label: 'Documents processed', value: String(files.length) },
-                { label: 'Transactions found', value: String(extractedRows.length) },
-                { label: 'Purchases detected', value: currency2(totals.cost) },
-                { label: 'Sales detected', value: currency2(totals.revenue) },
-              ].map(s => (
-                <div key={s.label} className='trade-elevated rounded-lg border p-4'>
-                  <p className='trade-secondary text-xs tracking-wider uppercase'>{s.label}</p>
-                  <p className='mt-1 text-lg font-semibold tabular-nums'>{s.value}</p>
-                </div>
-              ))}
-            </div>
-
-            <div className='trade-elevated rounded-xl border'>
-              <div className='trade-border flex flex-wrap items-center justify-between gap-3 border-b px-4 py-3'>
-                <div className='flex items-center gap-2 text-sm font-medium'>
-                  <TableIcon className='trade-accent size-4' /> Extracted transactions
-                </div>
-                <Badge variant='outline' className='border-trade-buy/40 bg-trade-buy/10 trade-buy'>
-                  Ready to import
-                </Badge>
-              </div>
-              <div className='overflow-x-auto'>
-                <Table>
-                  <TableHeader>
-                    <TableRow className='hover:bg-transparent'>
-                      <TableHead className='min-w-[200px]'>Product</TableHead>
-                      <TableHead>Type</TableHead>
-                      <TableHead>Date</TableHead>
-                      <TableHead className='text-right'>Units</TableHead>
-                      <TableHead className='text-right'>Unit value</TableHead>
-                      <TableHead className='text-right'>Amount</TableHead>
-                      <TableHead>Source</TableHead>
-                      <TableHead className='text-right'>Confidence</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {extractedRows.map((r, i) => (
-                      <TableRow key={i}>
-                        <TableCell>
-                          <div className='font-medium'>{r.product}</div>
-                          <div className='trade-secondary text-xs'>{r.sku}</div>
-                        </TableCell>
-                        <TableCell>
-                          <Badge
-                            variant='outline'
-                            className={cn(
-                              r.type === 'Sale'
-                                ? 'border-trade-buy/40 bg-trade-buy/10 trade-buy'
-                                : 'border-trade-accent/30 bg-trade-accent/10 trade-accent'
-                            )}
-                          >
-                            {r.type}
-                          </Badge>
-                        </TableCell>
-                        <TableCell className='whitespace-nowrap'>{r.date}</TableCell>
-                        <TableCell className='text-right tabular-nums'>{r.units}</TableCell>
-                        <TableCell className='text-right tabular-nums'>
-                          {currency2(r.unitValue)}
-                        </TableCell>
-                        <TableCell className='text-right font-medium tabular-nums'>
-                          {currency2(r.units * r.unitValue)}
-                        </TableCell>
-                        <TableCell className='trade-secondary max-w-[180px] truncate text-xs'>
-                          {r.document}
-                        </TableCell>
-                        <TableCell className='text-right'>
-                          <span
-                            className={cn(
-                              'tabular-nums',
-                              r.confidence < 0.85 ? 'trade-warning' : 'trade-secondary'
-                            )}
-                          >
-                            {(r.confidence * 100).toFixed(0)}%
-                          </span>
-                        </TableCell>
-                      </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
+            <div className='border-trade-buy/30 bg-trade-buy/10 flex items-center gap-3 rounded-xl border p-4'>
+              <CheckCircle2 className='trade-buy size-5' />
+              <div>
+                <p className='font-medium'>Done</p>
+                <p className='trade-secondary text-sm'>
+                  {files.length} document{files.length > 1 ? 's' : ''} processed. Transactions are
+                  in your ledger.
+                </p>
               </div>
             </div>
+            <Button variant='outline' onClick={reset}>
+              Upload more files
+            </Button>
+          </div>
+        )}
 
+        {stage === 'error' && (
+          <div className='space-y-4'>
+            <p className='trade-sell text-sm'>{error}</p>
             <div className='flex flex-wrap gap-2'>
-              <Button
-                onClick={() =>
-                  toast.success('Imported into ledger', {
-                    description: `${extractedRows.length} transactions posted to your product ledger.`,
-                  })
-                }
-              >
-                <CheckCircle2 className='size-4' /> Import all transactions
-              </Button>
-              <Button variant='outline' onClick={reset}>
-                Upload more files
-              </Button>
+              <Button onClick={reset}>Try again</Button>
             </div>
-            <p className='trade-secondary text-xs'>
-              Rows below 85% confidence are flagged for manual review before posting.
-            </p>
           </div>
         )}
       </CardContent>
