@@ -4,6 +4,7 @@ import './globals.css';
 import { Geist } from 'next/font/google';
 import { cn } from '@/lib/utils';
 import { RootProviders } from '@/src/presentation/providers/RootProviders';
+import { AppNavbar } from '@/components/app-navbar';
 
 const geist = Geist({ subsets: ['latin'], variable: '--font-sans' });
 
@@ -48,6 +49,7 @@ export default function RootLayout({
     <html lang='en' className={cn('font-sans', geist.variable)} suppressHydrationWarning>
       <body className='antialiased'>
         <RootProviders>
+          <AppNavbar />
           {children}
           {process.env.NODE_ENV === 'production' && <Analytics />}
         </RootProviders>
